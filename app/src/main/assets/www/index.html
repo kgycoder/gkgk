@@ -525,17 +525,9 @@
 
         <!-- ▌APPLE MUSIC 스타일 가사 전용 화면 (Lyrics View) ▐ -->
         <div class="np-lv" id="np-lv">
-            <div class="np-lv-top">
-                <button class="np-lv-close" id="np-lv-close" onclick="closeLyricsView()" aria-label="가사 화면 닫기">
-                    <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="rgba(255,255,255,.85)"
-                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="3,5.5 7.5,10 12,5.5" />
-                    </svg>
-                </button>
-            </div>
-
-            <div class="np-lv-track">
-                <div class="np-lv-art-shell">
+            <div class="np-lv-track" id="np-lv-track">
+                <div class="np-lv-grab"></div>
+                <div class="np-lv-art-shell" id="np-lv-art-shell">
                     <img id="np-lv-art" src="" alt="">
                 </div>
                 <div class="np-lv-meta">
