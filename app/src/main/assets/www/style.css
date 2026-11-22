@@ -5096,23 +5096,30 @@ button, a, div, span, input {
     justify-content: center;
 }
 
-/* ── Lyrics View 컨테이너: 기본은 숨김, .lyrics-view 상태일 때만 표시 ── */
+/* ── Lyrics View 컨테이너: 기본은 숨김, .lyrics-view 상태일 때만 표시 ──
+   구조(Apple Music 방식): 가사는 화면 전체 높이를 쓰고, 곡 정보(상단)/재생 컨트롤(하단)은 그 위에 겹쳐 올라간다.
+   → 재생 컨트롤이 자동으로 사라지면 그 아래에 가려져 있던 가사가 그대로 드러난다. */
 .np-lv {
+    --lv-head: calc(var(--safe-top) + 92px);   /* 상단 곡 정보 영역 높이: 가사 시작 여백/상단 페이드 기준 */
     position: absolute;
     inset: 0;
     z-index: 30;
     display: none;
-    flex-direction: column;
     opacity: 0;
     pointer-events: none;
 }
 
 #np.lyrics-view .np-lv {
-    display: flex;
+    display: block;
     opacity: 1;
     pointer-events: auto;
     animation: npLvIn .42s var(--ease) both;
 }
+
+/* Lyrics View 상태에서는 #np 의 입장 애니메이션(npIn, fill: both)을 끈다.
+   fill 값이 인라인 transform 을 덮어써서, 쓸어내려 닫는 제스처(#np 를 직접 이동/축소)가 먹히지 않기 때문.
+   (이미 끝난 애니메이션의 최종값은 'none' 이라 눈에 보이는 변화는 없다) */
+#np.lyrics-view { animation: none !important; }
 
 /* Lyrics View가 열려 있을 땐 앨범 아트/컨트롤 패널/상단 버튼들을 숨겨
    가사만 보기 위한 화면으로 구성한다 (기존 전체화면 토글과 충돌 없음). */
@@ -5123,55 +5130,53 @@ button, a, div, span, input {
     display: none !important;
 }
 
+/* 배경 메시: 이미 96px → 화면 크기로 부드럽게 보간된 그라디언트라 blur(18px) 가 없어도 같은 모습이다.
+   전체화면 캔버스 blur 는 메시가 갱신될 때마다 GPU 가 다시 계산하므로 Lyrics View 에서는 끈다(발열/FPS). */
+#np.lyrics-view #np-bg { filter: none; }
+
 @keyframes npLvIn {
     from { opacity: 0; transform: translateY(14px); }
     to   { opacity: 1; transform: none; }
 }
 
-/* 상단 바: 닫기 버튼만 (좌측) */
-.np-lv-top {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    padding: calc(var(--safe-top) + 14px) 20px 4px;
-    position: relative;
-    z-index: 5;
-}
-
-.np-lv-close {
-    flex-shrink: 0;
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    background: rgba(255,255,255,0.12);
-    backdrop-filter: blur(24px);
-    border: 1px solid rgba(255,255,255,0.14);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background .15s, transform .15s;
-    -webkit-tap-highlight-color: transparent;
-}
-.np-lv-close:active { transform: scale(0.9); background: rgba(255,255,255,0.22); }
-
-/* 트랙 정보 줄: 좌측 작은 앨범 카드 + 곡명/가수 (Apple Music Lyrics View 구조) */
+/* 상단 곡 정보 줄: 큰 앨범 카드 + 곡명/가수. 이 영역을 아래로 쓸어내리면 Lyrics View 가 닫힌다. */
 .np-lv-track {
-    flex-shrink: 0;
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    z-index: 5;
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 10px 24px 14px;
-    position: relative;
-    z-index: 5;
+    gap: 14px;
+    padding: calc(var(--safe-top) + 24px) 24px 12px;
+    touch-action: none;
+}
+/* 눈에 보이지 않는 추가 터치 영역(쓸어내리기 인식 범위 확장) */
+.np-lv-track::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; top: 100%;
+    height: 26px;
+}
+/* 쓸어내려 닫을 수 있다는 힌트(그랩 핸들) */
+.np-lv-grab {
+    position: absolute;
+    top: calc(var(--safe-top) + 9px);
+    left: 50%;
+    width: 38px;
+    height: 5px;
+    margin-left: -19px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.28);
+    pointer-events: none;
 }
 
 .np-lv-art-shell {
     flex-shrink: 0;
-    width: 44px;
-    height: 44px;
-    border-radius: 6px;
+    width: 56px;
+    height: 56px;
+    border-radius: 8px;
     overflow: hidden;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.08);
+    box-shadow: 0 8px 22px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.08);
 }
 #np-lv-art {
     width: 100%;
@@ -5186,40 +5191,42 @@ button, a, div, span, input {
     text-align: left;
 }
 .np-lv-title {
-    font-size: 15px;
+    font-size: 17px;
     font-weight: 700;
-    color: rgba(255,255,255,0.94);
-    letter-spacing: -.2px;
+    color: rgba(255,255,255,0.95);
+    letter-spacing: -.25px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 .np-lv-ch {
-    font-size: 12px;
-    color: rgba(255,255,255,0.52);
-    margin-top: 2px;
+    font-size: 14px;
+    color: rgba(255,255,255,0.55);
+    margin-top: 3px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-/* 가사 영역: 화면 대부분을 차지 */
+/* 가사 영역: 화면 전체 높이 (상단/하단 UI 는 그 위에 겹친다) */
 .np-lv-lyrics {
-    flex: 1;
-    min-height: 0;
-    position: relative;
+    position: absolute;
+    inset: 0;
+    z-index: 1;
 }
 
 .np-lv-scroll {
     height: 100%;
     overflow-y: hidden;   /* 네이티브 스크롤 대신 JS 스프링이 구동 (기존 방식과 동일) */
     overflow-x: hidden;
-    padding: 26px 30px;
+    /* 시작 여백 = 상단 곡 정보 영역 아래부터 (첫 줄이 곡 정보에 가려지지 않게) */
+    padding: calc(var(--lv-head) + 8px) 30px 0;
     box-sizing: border-box;
     position: relative;
     scroll-behavior: auto;
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 14%, black 86%, transparent 100%);
-    mask-image: linear-gradient(to bottom, transparent 0%, black 14%, black 86%, transparent 100%);
+    /* 상단: 곡 정보 영역 아래에서 서서히 나타남 / 하단: 화면 끝까지 보이고 아주 얇게만 페이드 */
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent var(--lv-head), #000 calc(var(--lv-head) + 46px), #000 calc(100% - 24px), transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0, transparent var(--lv-head), #000 calc(var(--lv-head) + 46px), #000 calc(100% - 24px), transparent 100%);
 }
 
 .np-lv-inner {
@@ -5232,15 +5239,22 @@ button, a, div, span, input {
 .np-lv-line-wrap {
     padding: 11px 0;
     cursor: pointer;
+    /* 한 줄의 클래스/색 변화가 다른 줄의 레이아웃·스타일 재계산으로 번지지 않게 격리 */
+    contain: layout style;
 }
 
-/* 기존 .np-lyric-line 폰트/색상/블러 전환을 그대로 물려받고,
+/* 기존 .np-lyric-line 폰트/색상 전환을 그대로 물려받고,
    Lyrics View 전용 크기/줄간격만 재정의 (더 크고, 줄 사이 여백도 넉넉하게) */
 .np-lyric-line.np-lv-line {
     font-size: 25px !important;
     line-height: 1.4 !important;
     padding: 0 !important;
+    /* 가사 줄마다 합성 레이어(will-change: color, filter)를 만들면 줄 수만큼 GPU 메모리/합성 비용이 늘어난다.
+       색 전환은 레이어 없이도 충분히 부드럽다. */
+    will-change: auto !important;
 }
+/* 활성 줄의 drop-shadow 는 줄 전체를 필터 래스터라이즈한다 → Lyrics View 에서는 쓰지 않는다 */
+.np-lyric-line.np-lv-line.active { filter: none !important; }
 
 /* 번역 가사: 원문 줄 바로 아래, 작은 글씨로 표시 (외국어 가사일 때만 존재) */
 .np-lv-line-tr {
@@ -5272,13 +5286,26 @@ button, a, div, span, input {
     padding: 60px 24px 0;
 }
 
-/* 하단: 최소한의 재생 컨트롤만 (Apple Music처럼 불필요한 요소는 숨김) */
+/* 하단: 재생바 + 이전/재생·정지/다음 (가사 위에 겹쳐진 오버레이).
+   일정 시간 상호작용이 없으면 부드럽게 사라지고(.ui-hide), 위로 스크롤하면 다시 나타난다.
+   opacity/transform 만 전환 → 컴포지터에서만 처리되어 레이아웃/페인트 비용이 없다. */
 .np-lv-bottom {
-    flex-shrink: 0;
-    padding: 10px 30px calc(var(--safe-bot) + 22px);
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    z-index: 5;
+    padding: 54px 30px calc(var(--safe-bot) + 24px);
     display: flex;
     flex-direction: column;
     gap: 18px;
+    background: linear-gradient(to top, rgba(0,0,0,0.66) 0%, rgba(0,0,0,0.40) 55%, rgba(0,0,0,0) 100%);
+    will-change: opacity, transform;
+    transition: opacity .35s cubic-bezier(.4,0,.2,1), transform .35s cubic-bezier(.22,.85,.28,1);
+}
+.np-lv.ui-hide .np-lv-bottom {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+    pointer-events: none;            /* 숨겨진 동안에는 터치가 아래 가사로 그대로 전달된다 */
+    transition-duration: .7s, .7s;
 }
 
 .np-lv-ctrl {
@@ -5290,6 +5317,13 @@ button, a, div, span, input {
 .np-lv-ctrl .nc-play { width: 52px; height: 52px; }
 .np-lv-ctrl .nc-play svg { width: 40px; height: 40px; }
 .np-lv-ctrl .nc-prev svg, .np-lv-ctrl .nc-next svg { width: 22px; height: 22px; }
+
+/* ── 쓸어내려 닫기: #np 전체를 미니 플레이어 앨범아트 쪽으로 끌어당기듯 축소 ──
+   transform/opacity/border-radius 만 사용. 제스처 동안에만 will-change 를 걸어 레이어를 유지하지 않는다. */
+#np.np-dragging, #np.np-closing { will-change: transform, opacity; }
+#np.np-closing { pointer-events: none; }
+#np.np-snap { transition: transform .34s cubic-bezier(.22,.85,.28,1), border-radius .34s ease; }
+#np.np-fly  { transition: transform .46s cubic-bezier(.5,0,.25,1), border-radius .46s ease-out, opacity .2s linear .26s; }
 
 @media (prefers-reduced-motion: reduce) {
     .np-lv-inner { transition: none !important; }
