@@ -366,6 +366,11 @@ public class MainActivity extends AppCompatActivity {
                     case "orientation":
                         String orient = msg.optString("value", "sensor");
                         runOnUiThread(() -> setOrientation(orient)); break;
+                    case "navbar": {
+                        // Lyrics View 재생 UI 자동 숨김/표시와 함께 시스템 내비게이션 바만 숨기거나 복귀
+                        final boolean hideNav = msg.optBoolean("hidden", false);
+                        runOnUiThread(() -> setNavBarHidden(hideNav)); break;
+                    }
                     default: break;
                 }
             } catch (JSONException e) {
@@ -390,7 +395,47 @@ public class MainActivity extends AppCompatActivity {
         runOnUiThread(() -> webView.evaluateJavascript(js, null));
     }
 
+    // Lyrics View: 재생 UI 와 함께 숨기는 시스템 내비게이션 바 상태 (상태바는 그대로 둔다)
+    private boolean navBarHidden = false;
+    // 가로 전체화면은 hideSystemUI()/showSystemUI() 가 상태바·내비 바를 모두 관리하므로 여기서는 건드리지 않는다
+    private boolean landscapeImmersive = false;
+
+    private void setNavBarHidden(boolean hide) {
+        navBarHidden = hide;
+        if (landscapeImmersive) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            WindowInsetsController c = getWindow().getInsetsController();
+            if (c == null) return;
+            if (hide) {
+                // 가장자리 스와이프로 잠깐 나타났다가 자동으로 다시 숨겨진다
+                c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                c.hide(WindowInsets.Type.navigationBars());
+            } else {
+                c.show(WindowInsets.Type.navigationBars());
+            }
+        } else {
+            //noinspection deprecation
+            getWindow().getDecorView().setSystemUiVisibility(hide
+                    ? (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION)
+                    : (View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN));
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        // 다른 앱/알림창을 다녀온 뒤 시스템이 내비 바를 되돌려 놓았다면, 숨김 상태를 다시 적용
+        if (hasFocus && navBarHidden && !landscapeImmersive) setNavBarHidden(true);
+    }
+
     private void setOrientation(String mode) {
+        landscapeImmersive = "landscape".equals(mode);
         if ("landscape".equals(mode)) {
             setRequestedOrientation(
                     ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
