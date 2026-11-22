@@ -37,7 +37,8 @@
     /** 하단 도크(내비/미니 플레이어): 이제 DOM 요소는 터치를 받지 않으므로(pointer-events:none) 히트 테스트가 아니라
      *  "레이아웃 상 보이는지 + Now Playing 에 덮여 있지 않은지" 만 확인한다. */
     function docked(el) {
-        if (npEl && npEl.classList.contains('on')) return false;
+        // Now Playing 이 쓸려 내려가며 닫히는 중(.np-closing)에는 아래 깔린 도크를 다시 보여준다
+        if (npEl && npEl.classList.contains('on') && !npEl.classList.contains('np-closing')) return false;
         const r = el.getBoundingClientRect();
         return r.width >= 2 && r.height >= 2 && r.bottom > 0 && r.top < innerHeight;
     }
@@ -97,15 +98,20 @@
         const st = {};
         st.acc = (typeof _accentColor === 'function' ? _accentColor() : '#fa2d5a');
 
+        /* Now Playing 이 화면을 완전히 덮고 있으면(다이얼로그 없음) 아래 UI(내비/검색/미니 플레이어)는 어차피 전송되지 않는다.
+           → 가사가 재생되는 내내 elementFromPoint/getBoundingClientRect(강제 레이아웃) 측정을 건너뛴다. */
+        const npCover = !!(npEl && npEl.classList.contains('on') && !npEl.classList.contains('np-closing') &&
+            !document.querySelector('#pl-dialog-overlay.on,#pl-confirm-overlay.on,#pl-add-modal-overlay.on'));
+
         /* 하단 내비 */
-        const nav = $('mob-nav');
+        const nav = npCover ? null : $('mob-nav');
         if (nav && docked(nav)) {
             const btns = Array.from(nav.querySelectorAll('.mn-btn'));
             st.nav = { r: box(nav.getBoundingClientRect()), active: Math.max(0, btns.findIndex(b => b.classList.contains('on'))) };
         }
 
         /* 검색 캡슐 (현재 활성 뷰) */
-        const wrap = document.querySelector('.view.on .mob-srch-wrap');
+        const wrap = npCover ? null : document.querySelector('.view.on .mob-srch-wrap');
         if (wrap && exposed(wrap)) {
             const inp = wrap.querySelector('.srch-inp');
             if (inp) {
@@ -119,7 +125,7 @@
         }
 
         /* 미니 플레이어 */
-        const bar = $('bar');
+        const bar = npCover ? null : $('bar');
         if (bar && !bar.classList.contains('bar-hidden') && docked(bar)) {
             const art = $('b-art');
             st.bar = {
@@ -218,7 +224,8 @@
             const t = r.target.nodeType === 1 ? r.target : r.target.parentElement;
             if (!t || t.id === 'bar-prog-fill') continue;
             // 박자 효과(카드 transform/shadow, 비주얼라이저 등)는 글래스 레이아웃과 무관 — closest() 비용도 아낀다
-            if (t.classList && (t.classList.contains('card') || t.classList.contains('vb'))) continue;
+            if (t.classList && (t.classList.contains('card') || t.classList.contains('vb') ||
+                t.classList.contains('np-lyric-line') || t.classList.contains('np-lv-line-wrap'))) continue;   // 가사 줄 상태 클래스(active/prev/near/ws-on)는 글래스와 무관
             if (t.id === 'np' || t.classList.contains('view') || t.id === 'bar') { if (t.id === 'np') syncNpLock(); once = true; continue; }
             if (t.closest) {
                 if (t.closest(OVERLAYS)) { burst = true; break; }
@@ -261,7 +268,13 @@
     const BEAT_FX = '.card, #vizz, #np-pulse, #np-particles, .c-now-bar';
     ['input', 'focusin', 'focusout', 'transitionend', 'animationend']
         .forEach(ev => document.addEventListener(ev, e => {
-            if ((ev === 'transitionend' || ev === 'animationend') && e.target && e.target.closest && e.target.closest(BEAT_FX)) return;
+            if ((ev === 'transitionend' || ev === 'animationend') && e.target && e.target.closest) {
+                if (e.target.closest(BEAT_FX)) return;
+                /* Now Playing 내부(가사 줄 색 전환·단어 싱크·재생 UI 페이드 등)의 전환은 하단 글래스 레이아웃과 무관하다.
+                   이걸 그대로 kick 하면 가사가 넘어갈 때마다 프레임마다 collect()+JSON.stringify 가 돌아 발열/프레임 저하가 누적된다.
+                   (#np 자신의 열림/닫힘 애니메이션만 통과) */
+                if (e.target !== npEl && e.target.closest('#np')) return;
+            }
             kick(300);
         }, { capture: true, passive: true }));
     setInterval(() => {            // 안전망 (프로그램적 value 변경 등 이벤트 없는 변화) — 변화 없으면 전송 안 함
