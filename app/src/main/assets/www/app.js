@@ -703,7 +703,13 @@ function updateNpColor() {
 
     if (npOpen && S.playing) {
         // 메시는 매우 느리게 움직이므로 20Hz → 10Hz 로 그려도 동일하게 보인다 (CPU/발열 절반)
-        if ((_npMeshTick++ & 1) === 0) renderNpMesh(beat, en, 2);
+        if (LV.active) {
+            // Lyrics View: 가사가 화면의 주인공이므로 메시는 5Hz 로 낮추고, 가사가 움직이는 동안(스프링/드래그/닫기)에는
+            // 캔버스를 갱신하지 않는다 (캔버스 갱신 → 전체화면 합성이 가사 스크롤 프레임과 겹치는 것을 방지)
+            const _lsc = LV.scrollEl;
+            if ((_npMeshTick++ & 3) === 0 && !LV.exiting && !(_lsc && _lsc._browsing) && performance.now() - LV.moveAt > 400) renderNpMesh(beat, en, 4);
+            else _lerpMeshColors();
+        } else if ((_npMeshTick++ & 1) === 0) renderNpMesh(beat, en, 2);
         else _lerpMeshColors();
         const pulse = document.getElementById('np-pulse');
         if (pulse) {
@@ -729,7 +735,7 @@ function updateNpColor() {
         // 180×180 픽셀 계산을 계속했다). 색 보간만 계속해서 열 때 색이 이미 수렴해 있도록 한다.
         // NP 가 열려 있고 일시정지인 경우엔 변화가 매우 느리므로 3틱(150ms)에 한 번만 그린다.
         if (npOpen) {
-            if (++_npIdleTick % 3 === 0) renderNpMesh(0, 0.05);
+            if (++_npIdleTick % (LV.active ? 9 : 3) === 0) renderNpMesh(0, 0.05);   // Lyrics View 에서는 더 드물게
         } else {
             _lerpMeshColors();
         }
@@ -3772,48 +3778,175 @@ function _clearLyrics() {
 ════════════════════════════════════════════ */
 /* cls: 상태 클래스(active/prev/near)가 붙어 있는 줄 인덱스 — 전체 줄을 훑지 않고 이 줄들만 되돌린다
    open: Secondary 공간이 열려 있는 줄 / anim: 공간 높이가 아직 전환 중인 줄 / pad: 스크롤 영역 padding-top 캐시 */
-const LV = { active: false, cls: [], open: new Set(), anim: new Set(), pad: -1, uiTimer: 0, uiHold: false };
-const LV_ANCHOR = 0.32;          // 현재 줄이 가사 영역 위에서 차지하는 세로 위치 (0.5 = 정중앙, Apple Music 처럼 위쪽 정렬)
+const LV = { active: false, cls: [], open: new Set(), anim: new Set(), pad: -1, uiTimer: 0, uiHold: false, exiting: false, moveAt: 0, scrollEl: null };
+/* 현재 줄이 가사 영역(이제 화면 전체 높이) 위에서 차지하는 세로 위치 (0.5 = 정중앙).
+   이전 구조(곡 정보/컨트롤을 뺀 영역의 0.32)와 비교해 화면 기준 약 30px 더 위쪽에 오도록 맞춘 값 */
+const LV_ANCHOR = 0.35;
 const LV_UI_IDLE_MS = 3500;      // 이 시간 동안 상호작용이 없으면 재생 UI 를 숨긴다
 
 /* ── 재생 UI(재생바/재생·일시정지/이전·다음) 자동 숨김 ──────────────────
    · 숨김/표시는 #np-lv 의 .ui-hide 클래스 하나로 처리 (opacity/transform 전환만 — 레이아웃 변화 없음)
-   · 다시 나타나는 제스처: "탭"(이동 10px 이하, 0.5초 이하). 가사를 위/아래로 끄는 드래그·플링은 제스처로 보지 않는다.
-   · 컨트롤을 만지고 있는 동안(재생바 드래그 포함)은 숨기지 않고, 손을 뗀 뒤부터 다시 센다. */
+   · UI 가 숨겨질 때 안드로이드 시스템 내비게이션 바도 함께 숨기고, UI 가 다시 보이면 같이 복귀한다.
+   · 다시 나타나는 제스처: ① 가사를 위로 쓸어올리는(위로 스크롤) 제스처 ② 짧은 탭.
+   · 손가락이 화면에 닿아 있는 동안(가사 드래그·재생바 조작 포함)은 숨기지 않고, 손을 뗀 뒤부터 다시 센다. */
+let _lvNavHidden = false;
+function _lvNavBar(hide) {
+    if (hide === _lvNavHidden) return;                 // 같은 상태면 네이티브 IPC 를 보내지 않는다
+    _lvNavHidden = hide;
+    try { window.AndroidBridge.postMessage(JSON.stringify({ type: 'navbar', hidden: hide })); } catch (e) { }
+}
 function _lvUiArm() {
     clearTimeout(LV.uiTimer);
-    if (LV.active) LV.uiTimer = setTimeout(_lvUiHide, LV_UI_IDLE_MS);
+    if (LV.active && !LV.exiting) LV.uiTimer = setTimeout(_lvUiHide, LV_UI_IDLE_MS);
 }
 function _lvUiHide() {
-    if (!LV.active || LV.uiHold) return;
+    if (!LV.active || LV.uiHold || LV.exiting) return;
     document.getElementById('np-lv')?.classList.add('ui-hide');
+    _lvNavBar(true);
 }
 function _lvUiShow() {
     document.getElementById('np-lv')?.classList.remove('ui-hide');
+    _lvNavBar(false);
     _lvUiArm();
 }
 function _lvUiInit() {
     const root = document.getElementById('np-lv');
     if (!root || root._uiInit) return;
     root._uiInit = true;
-    const bottom = root.querySelector('.np-lv-bottom');
-    let sx = 0, sy = 0, st = 0, tracking = false;
+    const lyr = root.querySelector('.np-lv-lyrics');
+    let sx = 0, sy = 0, st = 0, tracking = false, inLyr = false;
     root.addEventListener('pointerdown', e => {
         sx = e.clientX; sy = e.clientY; st = performance.now(); tracking = true;
-        if (bottom && bottom.contains(e.target) && !root.classList.contains('ui-hide')) {
-            LV.uiHold = true; clearTimeout(LV.uiTimer);          // 컨트롤 조작 중에는 숨기지 않음
-        }
+        inLyr = !!(lyr && lyr.contains(e.target));
+        LV.uiHold = true; clearTimeout(LV.uiTimer);          // 손가락이 닿아 있는 동안에는 숨기지 않음
+    }, { passive: true });
+    root.addEventListener('pointermove', e => {
+        // 숨겨진 상태에서 가사를 위로 쓸어올리면(위로 스크롤) 즉시 다시 보인다
+        if (!tracking || !inLyr || !root.classList.contains('ui-hide')) return;
+        if (sy - e.clientY > 14) { inLyr = false; _lvUiShow(); }
     }, { passive: true });
     const end = (e, cancelled) => {
-        if (LV.uiHold) { LV.uiHold = false; _lvUiArm(); }
         if (!tracking) return;
         tracking = false;
-        if (cancelled) return;                                     // 브라우저가 제스처를 가져감(스크롤/드래그)
-        if (Math.hypot(e.clientX - sx, e.clientY - sy) > 10 || performance.now() - st > 500) return;   // 드래그·롱프레스는 제외
-        if (root.classList.contains('ui-hide')) _lvUiShow(); else _lvUiArm();
+        LV.uiHold = false;
+        if (LV.exiting) return;
+        const hidden = root.classList.contains('ui-hide');
+        const tap = !cancelled && Math.hypot(e.clientX - sx, e.clientY - sy) <= 10 && performance.now() - st <= 500;
+        if (hidden) { if (tap) _lvUiShow(); }                // 드래그(아래로)·롱프레스는 표시 제스처가 아니다
+        else _lvUiArm();
     };
     root.addEventListener('pointerup', e => end(e, false), { passive: true });
     root.addEventListener('pointercancel', e => end(e, true), { passive: true });
+}
+
+/* ── 쓸어내려 닫기 ───────────────────────────────────────────────
+   곡 정보 영역(.np-lv-track)을 아래로 쓸면 #np 전체가 손가락을 따라 내려오며 살짝 작아지고,
+   놓았을 때 충분히 내려왔거나(110px↑) 빠르게 쓸었다면 메인 화면 하단 미니 플레이어의 앨범아트 속으로
+   빨려 들어가듯 축소 + 페이드 되며 닫힌다. 부족하면 원위치로 되돌아간다.
+   transform/opacity/border-radius 만 사용 (제스처 동안만 will-change). 레이아웃 계산 없음. */
+function _lvBarArt() {
+    const vw = innerWidth, vh = innerHeight;
+    const a = document.getElementById('b-art');
+    let r = a && a.getBoundingClientRect();
+    if (!r || r.width < 8 || r.height < 8 || r.bottom <= 0 || r.top >= vh) {
+        r = { left: 19, top: vh - 120, width: 40, height: 40 };      // 미니 플레이어 기본 위치 근사
+    }
+    return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, w: r.width, h: r.height };
+}
+function _lvExitClean(np) {
+    np.classList.remove('np-dragging', 'np-snap', 'np-fly', 'np-closing');
+    np.style.transform = ''; np.style.opacity = ''; np.style.borderRadius = ''; np.style.transformOrigin = '';
+}
+function _lvExitSnap() {
+    const np = document.getElementById('np');
+    if (!np) return;
+    np.classList.add('np-snap');
+    np.style.transform = 'translate3d(0,0,0) scale(1)';
+    np.style.borderRadius = '0px';
+    let tm = 0;
+    const fin = () => {
+        np.removeEventListener('transitionend', onEnd); clearTimeout(tm);
+        _lvExitClean(np);
+        if (LV.active) _lvUiArm();
+    };
+    const onEnd = e => { if (e.target === np && e.propertyName === 'transform') fin(); };
+    np.addEventListener('transitionend', onEnd);
+    tm = setTimeout(fin, 500);
+}
+function _lvExitFly(tgt) {
+    const np = document.getElementById('np');
+    if (!np || LV.exiting) return;
+    LV.exiting = true;
+    clearTimeout(LV.uiTimer);
+    _lvNavBar(false);                                   // 시스템 내비게이션 바 복귀 (애니메이션이 끝날 때쯤엔 이미 보인다)
+    np.classList.add('np-closing');                     // glass-bridge: 아래 깔린 미니 플레이어/내비 글래스를 다시 노출
+    np.classList.remove('np-snap');
+    np.classList.add('np-fly');
+    const sx = Math.max(0.02, tgt.w / innerWidth), sy = Math.max(0.02, tgt.h / innerHeight);
+    np.style.transformOrigin = `${tgt.cx}px ${tgt.cy}px`;
+    np.style.transform = `translate3d(0,0,0) scale(${sx.toFixed(4)},${sy.toFixed(4)})`;
+    np.style.borderRadius = '140px';
+    np.style.opacity = '0';
+    let tm = 0;
+    const fin = () => {
+        if (!LV.exiting) return;
+        LV.exiting = false;
+        np.removeEventListener('transitionend', onEnd); clearTimeout(tm);
+        closeNP();                                      // Lyrics View 정리 + Now Playing 닫기
+        _lvExitClean(np);
+    };
+    const onEnd = e => { if (e.target === np && e.propertyName === 'transform') fin(); };
+    np.addEventListener('transitionend', onEnd);
+    tm = setTimeout(fin, 700);                          // transitionend 가 오지 않는 경우의 안전장치
+}
+function _lvExitInit() {
+    const hd = document.getElementById('np-lv-track');
+    const np = document.getElementById('np');
+    if (!hd || !np || hd._exitInit) return;
+    hd._exitInit = true;
+    const DIST = 110, VEL = 0.55;        // 닫힘 확정 거리(px) / 속도(px/ms)
+    let on = false, began = false, sy = 0, dy = 0, tgt = null, raf = 0, s1 = null, s2 = null;
+    const paint = () => {
+        raf = 0;
+        const p = Math.min(dy / (innerHeight * 0.55), 1);
+        np.style.transform = `translate3d(0,${(dy * 0.92).toFixed(1)}px,0) scale(${(1 - p * 0.12).toFixed(4)})`;
+        np.style.borderRadius = Math.min(32, dy / 5).toFixed(1) + 'px';
+    };
+    hd.addEventListener('touchstart', e => {
+        if (LV.exiting || e.touches.length !== 1) return;
+        on = true; began = false; dy = 0;
+        sy = e.touches[0].clientY;
+        s1 = s2 = { t: performance.now(), y: sy };
+    }, { passive: true });
+    hd.addEventListener('touchmove', e => {
+        if (!on) return;
+        const y = e.touches[0].clientY;
+        dy = Math.max(0, y - sy);
+        s1 = s2; s2 = { t: performance.now(), y };
+        if (!began) {
+            if (dy < 8) return;
+            began = true;
+            clearTimeout(LV.uiTimer); LV.uiHold = true;
+            tgt = _lvBarArt();
+            np.style.transformOrigin = `${tgt.cx}px ${tgt.cy}px`;
+            np.classList.remove('np-snap');
+            np.classList.add('np-dragging');
+        }
+        if (!raf) raf = requestAnimationFrame(paint);
+    }, { passive: true });
+    const end = cancelled => {
+        if (!on) return;
+        on = false;
+        if (raf) { cancelAnimationFrame(raf); raf = 0; }
+        if (!began) return;
+        LV.uiHold = false;
+        const now = performance.now(), dt = s2.t - s1.t;
+        const v = (dt > 0 && now - s2.t < 100) ? (s2.y - s1.y) / dt : 0;
+        if (!cancelled && (dy > DIST || (v > VEL && dy > 24))) _lvExitFly(tgt);
+        else _lvExitSnap();
+    };
+    hd.addEventListener('touchend', () => end(false), { passive: true });
+    hd.addEventListener('touchcancel', () => end(true), { passive: true });
 }
 function _lvReset() { LV.cls = []; LV.open.clear(); LV.anim.clear(); LV.pad = -1; }
 
@@ -3824,8 +3957,9 @@ function toggleLyricsView() {
 
 function openLyricsView() {
     if (!LY.lines.length) { toast('가사가 없어요'); return; }
-    if (NP_LS.active) return; // 가로모드 전체화면 중에는 사용하지 않음
+    if (NP_LS.active || LV.exiting) return; // 가로모드 전체화면 중/닫히는 중에는 사용하지 않음
     LV.active = true;
+    LV.scrollEl = document.getElementById('np-lv-scroll');
     document.getElementById('np')?.classList.add('lyrics-view');
     document.getElementById('np-lv-btn')?.classList.add('on');
     const t = S.track;
@@ -3839,16 +3973,18 @@ function openLyricsView() {
     _lvReset();
     _renderLvLyrics();
     _lvUiInit();
+    _lvExitInit();
     _lvUiShow();
     requestAnimationFrame(() => { _highlightLvLine(LY.curIdx, true); });
     _translateLyricsIfNeeded();
 }
 
 function closeLyricsView() {
-    if (!LV.active) return;
+    if (!LV.active || LV.exiting) return;   // 쓸어내려 닫는 애니메이션 중에는 끝날 때 한 번에 정리한다
     LV.active = false;
     clearTimeout(LV.uiTimer); LV.uiHold = false;
     document.getElementById('np-lv')?.classList.remove('ui-hide');
+    _lvNavBar(false);
     document.getElementById('np')?.classList.remove('lyrics-view');
     document.getElementById('np-lv-btn')?.classList.remove('on');
     if (LY._lvScrollSpring) LY._lvScrollSpring.stop();
@@ -4005,6 +4141,7 @@ function _highlightLvLine(idx, instant) {
         const target = (scroll.clientHeight * LV_ANCHOR) - LV.pad - _lvMid(idx);
         if (!LY._lvScrollSpring) LY._lvScrollSpring = _makeSpring();
         const applyFrame = (pos, vel) => {
+            LV.moveAt = performance.now();
             inner.style.transform = `translateY(${pos}px)`;
             _applyLineSpread('el_lv_wrap', idx, Math.max(-20, Math.min(20, vel * -0.055)));
         };
